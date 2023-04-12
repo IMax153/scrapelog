@@ -27,12 +27,12 @@
 
     devShells = forAllSystems (system: let
       pkgs = nixpkgs.legacyPackages.${system};
-      nodePackages = import ./infra/default.nix { inherit pkgs; };
     in {
       default = nixpkgsFor.${system}.mkShell {
-        buildInputs = [
-          nixpkgsFor.${system}.nodejs-16_x
-        ] ++ builtins.attrValues nodePackages;
+        buildInputs = with pkgs; [
+          nodejs-16_x
+          nodePackages.pnpm
+        ];
       };
     });
   };
