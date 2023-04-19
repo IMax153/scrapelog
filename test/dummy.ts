@@ -147,10 +147,9 @@ export interface Entity<
 > {
   readonly _Unresolved: (_: Unresolved) => Unresolved
   readonly _ExtraFields: (_: ExtraFields) => ExtraFields
-  as<A extends Unresolved>(): Entity<
-    A,
-    { [K in keyof ExtraFields]: (_: A) => ReturnType<ExtraFields[K]> }
-  >
+  as<A extends Unresolved>(
+    this: Entity<A, ExtraFields>
+  ): Entity<A, { [K in keyof ExtraFields]: (_: A) => ReturnType<ExtraFields[K]> }>
 }
 
 export type GetUnresolved<A extends Entity<any, any>> = ReturnType<A["_Unresolved"]>
