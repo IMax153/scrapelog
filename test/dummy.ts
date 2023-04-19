@@ -1,3 +1,4 @@
+import type * as Brand from "@effect/data/Brand"
 import * as Chunk from "@effect/data/Chunk"
 import * as Differ from "@effect/data/Differ"
 import * as Equal from "@effect/data/Equal"
@@ -6,6 +7,7 @@ import * as Option from "@effect/data/Option"
 import * as Effect from "@effect/io/Effect"
 import * as Schema from "@effect/schema/Schema"
 import * as ChunkPatch from "@effect/scrapelog/ChunkPatch"
+// import SchemaBuilder from "@pothos/core"
 import { describe, it } from "vitest"
 
 export interface Resource<
@@ -76,6 +78,167 @@ const UserResource_ = makeResource(
 
 interface UserResource extends TypeOf<typeof UserResource_> {}
 const UserResource: UserResource = UserResource_
+
+export declare namespace Resolved {
+  export type ArtistURI = `spotify:artist:${string}` & Brand.Brand<"ArtistId">
+
+  export interface Artist {
+    readonly uri: ArtistURI
+    readonly name: string
+  }
+
+  export type TrackURI = `spotify:track:${string}` & Brand.Brand<"TrackId">
+
+  export interface Track {
+    readonly uri: TrackURI
+    readonly name: string
+    readonly album: Album
+    readonly artists: ReadonlyArray<Artist>
+  }
+
+  export type AlbumURI = `spotify:album:${string}` & Brand.Brand<"AlbumId">
+
+  export interface Album {
+    readonly name: string
+    readonly uri: AlbumURI
+    readonly tracks: ReadonlyArray<Track>
+    readonly trackCount: number
+  }
+}
+
+export declare namespace Unresolved {
+  export type ArtistURI = `spotify:artist:${string}` & Brand.Brand<"ArtistId">
+
+  export interface Artist {
+    readonly uri: ArtistURI
+    readonly name: string
+  }
+
+  export type TrackURI = `spotify:track:${string}` & Brand.Brand<"TrackId">
+
+  export interface Track {
+    readonly name: string
+    readonly uri: TrackURI
+    readonly album: SimplifiedAlbum
+    readonly artists: ReadonlyArray<ArtistURI>
+  }
+
+  export interface SimplifiedAlbum {
+    readonly name: string
+    readonly uri: AlbumURI
+    readonly total_tracks: number
+  }
+
+  export type AlbumURI = `spotify:album:${string}` & Brand.Brand<"AlbumId">
+
+  export interface Album {
+    readonly name: string
+    readonly uri: AlbumURI
+    readonly tracks: ReadonlyArray<TrackURI>
+    readonly total_tracks: number
+  }
+}
+
+export interface Entity<A extends { Unresolved: any; ExtraFields: any }> {
+  readonly _A: (_: A) => A
+  as<Unresolved>(): Entity<{
+    Unresolved: Unresolved
+    ExtraFields: A["ExtraFields"]
+  }>
+}
+
+type GetUnresolved<A extends Entity<any>> = ReturnType<A["_A"]>["Unresolved"]
+
+export declare const makeEntity: <
+  UnresolvedRaw,
+  Unresolved,
+  Dependencies extends ReadonlyArray<Entity<any>>,
+  ExtraFields extends {
+    readonly [K: string]: (_: Unresolved) => Effect.Effect<any, any, any>
+  }
+>(params: {
+  schema: Schema.Schema<UnresolvedRaw, Unresolved>
+  dependencies: Dependencies
+  resolvers: ExtraFields
+}) => Entity<{ Unresolved: Unresolved; ExtraFields: ExtraFields }>
+
+export const ArtistURI = pipe(
+  Schema.string,
+  Schema.filter((s) => s.startsWith("spotify:artist:")),
+  Schema.brand("ArtistURI")
+)
+
+const Artist_ = makeEntity({
+  schema: Schema.struct({
+    uri: ArtistURI,
+    name: Schema.string
+  }),
+  dependencies: [],
+  resolvers: {}
+})
+
+export interface Artist extends GetUnresolved<typeof Artist_> {}
+export const Artist = Artist_.as<Artist>()
+
+export const AlbumURI = pipe(
+  Schema.string,
+  Schema.filter((s) => s.startsWith("spotify:album:")),
+  Schema.brand("AlbumURI")
+)
+
+export const SimplifiedAlbum = Schema.struct({
+  uri: AlbumURI,
+  name: Schema.string,
+  total_tracks: Schema.number
+})
+
+export const TrackURI = pipe(
+  Schema.string,
+  Schema.filter((s) => s.startsWith("spotify:track:")),
+  Schema.brand("TrackURI")
+)
+
+const Track_ = makeEntity({
+  schema: Schema.struct({
+    uri: TrackURI,
+    name: Schema.string,
+    album: SimplifiedAlbum,
+    artists: Schema.array(ArtistURI)
+  }),
+  dependencies: [Artist],
+  resolvers: {
+    artists: (_) => Effect.succeed<ReadonlyArray<Resolved.Artist>>([])
+  }
+})
+
+export interface Track extends GetUnresolved<typeof Track_> {}
+export const Track = Track_.as<Track>()
+
+// const builder = new SchemaBuilder<{
+//   Objects: {
+//     Track: Unresolved.Track
+//   }
+// }>({})
+
+// builder.objectType("Track", {
+//   fields: (t) => ({
+//     uri: t.string({ resolve: (arg) => arg.uri }),
+//     whatIsOn: t.int({ resolve: () => Math.random() })
+//   })
+// })
+
+// builder.queryType({
+//   fields: (t) => ({
+//     trackById: t.field({
+//       type: "Track",
+//       args: { trackUri: t.arg.string({ required: true }) },
+//       resolve: () => ({ })
+//     })
+//   })
+// })
+
+// const TodoId = pipe(Schema.number, Schema.brand("TodoId"))
+// type TodoId = Schema.To<typeof TodoId>
 
 // User Requirements:
 //   1. Embedded DSL
