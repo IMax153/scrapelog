@@ -139,20 +139,27 @@ export declare namespace Unresolved {
   }
 }
 
-export interface Entity<A extends { Unresolved: any; ExtraFields: any }> {
-  readonly _A: (_: A) => A
-  as<Unresolved>(): Entity<{
-    Unresolved: Unresolved
-    ExtraFields: A["ExtraFields"]
-  }>
+export interface Entity<
+  Unresolved,
+  ExtraFields extends {
+    readonly [K: string]: (_: Unresolved) => Effect.Effect<any, any, any>
+  }
+> {
+  readonly _Unresolved: (_: Unresolved) => Unresolved
+  readonly _ExtraFields: (_: ExtraFields) => ExtraFields
+  as<A extends Unresolved>(): Entity<
+    A,
+    { [K in keyof ExtraFields]: (_: A) => ReturnType<ExtraFields[K]> }
+  >
 }
 
-type GetUnresolved<A extends Entity<any>> = ReturnType<A["_A"]>["Unresolved"]
+export type GetUnresolved<A extends Entity<any, any>> = ReturnType<A["_Unresolved"]>
+export type GetExtraFields<A extends Entity<any, any>> = ReturnType<A["_ExtraFields"]>
 
 export declare const makeEntity: <
   UnresolvedRaw,
   Unresolved,
-  Dependencies extends ReadonlyArray<Entity<any>>,
+  Dependencies extends ReadonlyArray<Entity<any, any>>,
   ExtraFields extends {
     readonly [K: string]: (_: Unresolved) => Effect.Effect<any, any, any>
   }
@@ -160,7 +167,7 @@ export declare const makeEntity: <
   schema: Schema.Schema<UnresolvedRaw, Unresolved>
   dependencies: Dependencies
   resolvers: ExtraFields
-}) => Entity<{ Unresolved: Unresolved; ExtraFields: ExtraFields }>
+}) => Entity<Unresolved, ExtraFields>
 
 export const ArtistURI = pipe(
   Schema.string,
