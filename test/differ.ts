@@ -1,8 +1,179 @@
-import * as Data from "@effect/data/Data"
-import * as Equal from "@effect/data/Equal"
-import type { NonEmptyReadonlyArray } from "@effect/data/ReadonlyArray"
 import type * as AST from "@effect/schema/AST"
 import * as Schema from "@effect/schema/Schema"
+import type { Patch } from "../src/diff.js"
+import { AndThen, ArrayUpdate, Empty, Replace, StructUpdate } from "../src/diff.js"
+
+type TODO = any
+
+type Diff<TVal> = (oldVal: TVal, newVal: TVal) => TODO
+
+// const makePatcher = <TVal>(ast: AST.AST): Patcher<TVal> => {
+const makeDiff = <TSchema extends Schema.Schema<any, any>>(schema: TSchema): Diff<Schema.From<TSchema>> => {
+  const ast = schema.ast
+
+  const go = (ast: AST.AST, oldVal: any, newVal: any): Patch => {
+    // const patch = Empty
+
+    switch (ast._tag) {
+      case "TypeLiteral": {
+        return ast.propertySignatures
+          // .filter((propertySignature) => {
+          //   // TODO do proper equality check (e.g. for non-scalars)
+          //   if (oldVal[propertySignature.name] === newVal[propertySignature.name]) {
+          //     return false
+          //   }
+
+          //   return true
+          // })
+          .reduce((patchAcc, propertySignature) => {
+            if (propertySignature.isOptional && oldVal?.[propertySignature.name] === undefined) {
+              return patchAcc
+            }
+
+            return AndThen({
+              first: patchAcc,
+              second: StructUpdate({
+                // TODO handle recursive paths
+                path: [propertySignature.name],
+                patch: go(
+                  propertySignature.type,
+                  oldVal[propertySignature.name],
+                  newVal[propertySignature.name]
+                )
+              })
+            })
+          }, Empty)
+      }
+      case "NumberKeyword":
+      case "BooleanKeyword":
+      case "BigIntKeyword":
+      case "Literal":
+      case "StringKeyword": {
+        if (oldVal === newVal) {
+          return Empty
+        }
+
+        return Replace({ value: newVal })
+      }
+      case "Refinement":
+        return go(ast.from, oldVal, newVal)
+      case "Transform":
+        return go(ast.from, oldVal, newVal)
+      case "Tuple":
+        if (ast.rest._tag === "Some" && ast.rest.value.length === 1) {
+          const elementAst = ast.rest.value[0]
+          const maxLength = Math.max(oldVal.length, newVal.length)
+          return Array.from({ length: maxLength }).reduce((patchAcc: Patch, _, index) => {
+            const oldElement = oldVal[index]
+            const newElement = newVal[index]
+            if (oldElement === newElement) {
+              return patchAcc
+            }
+
+            return AndThen({
+              first: patchAcc,
+              second: ArrayUpdate({
+                index,
+                patch: go(elementAst, oldElement, newElement)
+              })
+            })
+          }, Empty)
+        } else {
+          console.dir(ast, { depth: null, colors: true })
+          throw new Error(`This tuple case is not handled yet`)
+        }
+      case "Lazy": {
+        return go(ast.f(), oldVal, newVal)
+      }
+      case "Declaration":
+      case "UniqueSymbol":
+      case "UndefinedKeyword":
+      case "VoidKeyword":
+      case "NeverKeyword":
+      case "UnknownKeyword":
+      case "AnyKeyword":
+      case "SymbolKeyword":
+      case "ObjectKeyword":
+      case "Enums":
+      case "TemplateLiteral":
+      case "Union":
+        console.dir(ast, { depth: null, colors: true })
+        throw new Error("Not yet implemented")
+      default: {
+        throw new Error("Should never happen")
+      }
+    }
+
+    // return patch
+  }
+
+  /** NOTE `diff` assumes the values have already been validated according to the `schema` */
+  const diff: Diff<Schema.From<TSchema>> = (oldVal, newVal) => go(ast, oldVal, newVal)
+
+  return diff
+}
+
+const User_ = Schema.struct({
+  // age: Schema.number,
+  age: Schema.int()(Schema.number),
+  dateOfBirth: Schema.optional(Schema.DateFromString),
+  name: Schema.string,
+  aliases: Schema.array(Schema.string)
+  // subUser: Schema.optional(Schema.lazy(() => User))
+})
+
+type UserFrom = Schema.From<typeof User_> & { subUser?: UserFrom }
+type UserTo = Schema.To<typeof User_> & { subUser?: UserTo }
+const User: Schema.Schema<UserFrom, UserTo> = Schema.extend(User_)(Schema.struct({
+  subUser: Schema.optional(Schema.lazy(() => User))
+}))
+
+const diff = makeDiff(User)
+
+test("test", () => {
+  const patch = diff({ age: 0, name: "foo", aliases: ["foo"] }, { age: 1, name: "bar", aliases: ["bar1", "bar2"] })
+
+  console.dir(patch, { depth: null, colors: true })
+})
+
+test("test 2", () => {
+  const patch = diff({
+    age: 0,
+    name: "foo",
+    aliases: [],
+    subUser: {
+      age: 20,
+      name: "sub",
+      aliases: []
+    }
+  }, {
+    age: 0,
+    name: "bar",
+    aliases: [],
+    subUser: {
+      age: 10,
+      name: "sub",
+      aliases: []
+    }
+  })
+
+  console.dir(patch, { depth: null, colors: true })
+})
+
+// interface FractionalIndex<Output> extends ReadonlyArray<readonly [number, Output]> {}
+
+// Schema.data
+
+// const FractionalIndexedArray = <Input, Output>(
+//   elementSchema: Schema.Schema<Input, Output>
+// ): Schema.Schema<ReadonlyArray<Input>, FractionalIndex<Output>> =>
+//   Schema.transform(
+//     Schema.array(elementSchema),
+//     Schema.to(Schema.array(Schema.tuple(Schema.number, elementSchema))),
+//     // TODO calc fractional index
+//     (_) => _.map((v, i) => [i / i, v] as const),
+//     (_) => _.map(([, v]) => v)
+//   )
 
 // const { ast } = Schema.struct({
 //   uri: TrackURI,
@@ -11,176 +182,19 @@ import * as Schema from "@effect/schema/Schema"
 //   artists: Schema.array(ArtistURI)
 // })
 
-// AST -> ASTPatch
+/*
+- optimize step
+  - remove unnecessary steps
+    - remove empty patches
+  - flatten steps
+  - optimize for sql...
 
-export type Patch = Empty | AndThen | StructAdd | StructRemove | StructUpdate | ArrayAppend | ArraySlice | ArrayUpdate
+- custom schema for fractional indexed arrays (as list of tuple: [f-index, value])
 
-export interface Empty extends Data.Case {
-  readonly _tag: "Empty"
-}
+- goals: patches should be JSON serializable and as compact as possible
 
-export const Empty = Data.tagged<Empty>("Empty")()
+- JSON patch
+- talk to Tim re DB write batching
 
-export interface AndThen extends Data.Case {
-  readonly _tag: "AndThen"
-  readonly first: Patch
-  readonly second: Patch
-}
-
-export const AndThen = Data.tagged<AndThen>("AndThen")
-
-export interface StructAdd extends Data.Case {
-  readonly _tag: "StructAdd"
-  readonly path: NonEmptyReadonlyArray<string>
-  readonly patch: Patch
-}
-
-export const StructAdd = Data.tagged<StructAdd>("StructAdd")
-
-export interface StructRemove extends Data.Case {
-  readonly _tag: "StructRemove"
-  readonly path: NonEmptyReadonlyArray<string>
-}
-
-export const StructRemove = Data.tagged<StructRemove>("StructRemove")
-
-export interface StructUpdate extends Data.Case {
-  readonly _tag: "StructUpdate"
-  readonly path: NonEmptyReadonlyArray<string>
-  readonly patch: Patch
-}
-
-export const StructUpdate = Data.tagged<StructUpdate>("StructUpdate")
-
-export interface ArrayAppend extends Data.Case {
-  readonly _tag: "ArrayAppend"
-  readonly values: ReadonlyArray<unknown>
-}
-
-export const ArrayAppend = Data.tagged<ArrayAppend>("ArrayAppend")
-
-export interface ArraySlice extends Data.Case {
-  readonly _tag: "ArraySlice"
-  readonly from: number
-  readonly until: number
-}
-
-export const ArraySlice = Data.tagged<ArraySlice>("ArraySlice")
-
-export interface ArrayUpdate extends Data.Case {
-  readonly _tag: "ArrayUpdate"
-  readonly index: number
-  readonly patch: Patch
-}
-
-export const ArrayUpdate = Data.tagged<ArrayUpdate>("ArrayUpdate")
-
-const diff = <A>(
-  oldValue: A,
-  newValue: A
-): Patch => {
-  if (typeof oldValue !== typeof newValue) {
-    throw new Error("Not handled yet")
-  }
-
-  if (Array.isArray(oldValue) && Array.isArray(newValue)) {
-    let i = 0
-    let patch: Patch = Empty
-    while (i < oldValue.length && i < newValue.length) {
-      const oldElement = oldValue[i]
-      const newElement = newValue[i]
-      const valuePatch = diff(oldElement, newElement)
-      if (!Equal.equals(valuePatch, Empty)) {
-        patch = AndThen({
-          first: patch,
-          second: ArrayUpdate({ index: i, patch: valuePatch })
-        })
-      }
-      i = i + 1
-    }
-    if (i < oldValue.length) {
-      patch = AndThen({
-        first: patch,
-        second: ArraySlice({ from: 0, until: i })
-      })
-    }
-    if (i < newValue.length) {
-      patch = AndThen({
-        first: patch,
-        second: ArrayAppend({ values: newValue.slice(i) })
-      })
-    }
-    return patch
-  }
-
-  if (typeof oldValue === "object" && oldValue != null && typeof newValue === "object" && newValue != null) {
-  }
-
-  throw new Error("Not implemented")
-}
-
-describe("Dummy", () => {
-  it("test", () => {
-    // Empty
-    // AndThen
-    // Add
-    // Remove
-    // Update
-
-    const patchFor = <A>(schema: Schema.Schema<A>): ASTPatch => {
-      const go = (ast: AST.AST): ASTPatch => {
-        switch (ast._tag) {
-          case "Declaration":
-          case "Literal":
-          case "UniqueSymbol":
-          case "UndefinedKeyword":
-          case "VoidKeyword":
-          case "NeverKeyword":
-          case "UnknownKeyword":
-          case "AnyKeyword":
-          case "StringKeyword":
-          case "NumberKeyword":
-          case "BooleanKeyword":
-          case "BigIntKeyword":
-          case "SymbolKeyword":
-          case "ObjectKeyword":
-          case "Enums":
-          case "TemplateLiteral":
-          case "Tuple":
-          case "TypeLiteral":
-          case "Union":
-          case "Lazy":
-          case "Refinement":
-          case "Transform":
-        }
-      }
-      return go(schema.ast)
-    }
-
-    // { foo: string, bar: number }
-    // ----- Patch = Remove("bar")
-    // { foo: string }
-
-    const oldValue = { foo: "foo", bar: 0 }
-    const newValue = { foo: "foo" }
-
-    let output: ASTPatch = { _tag: "Empty" }
-    for (const [key, value] of Object.entries(oldValue)) {
-      if (Object.prototype.hasOwnProperty.call(newValue, key)) {
-        output = {
-          _tag: "AndThen",
-          first: output,
-          second: { _tag: "Add", key, value }
-        }
-      } else {
-        output = {
-          _tag: "AndThen",
-          first: output,
-          second: { _tag: "Remove", key }
-        }
-      }
-    }
-
-    console.dir(output, { depth: null, colors: true })
-  })
-})
+- schema todo: support ordered arrays (for fractional indexing)
+*/
