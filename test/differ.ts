@@ -25,8 +25,12 @@ const makeDiff = <TSchema extends Schema.Schema<any, any>>(schema: TSchema): Dif
 
           //   return true
           // })
-          .reduce((patchAcc, propertySignature) =>
-            AndThen({
+          .reduce((patchAcc, propertySignature) => {
+            if (propertySignature.isOptional && oldVal?.[propertySignature.name] === undefined) {
+              return patchAcc
+            }
+
+            return AndThen({
               first: patchAcc,
               second: StructUpdate({
                 // TODO handle recursive paths
@@ -37,7 +41,8 @@ const makeDiff = <TSchema extends Schema.Schema<any, any>>(schema: TSchema): Dif
                   newVal[propertySignature.name]
                 )
               })
-            }), Empty)
+            })
+          }, Empty)
       }
       case "NumberKeyword":
       case "BooleanKeyword":
@@ -77,6 +82,9 @@ const makeDiff = <TSchema extends Schema.Schema<any, any>>(schema: TSchema): Dif
           console.dir(ast, { depth: null, colors: true })
           throw new Error(`This tuple case is not handled yet`)
         }
+      case "Lazy": {
+        return go(ast.f(), oldVal, newVal)
+      }
       case "Declaration":
       case "UniqueSymbol":
       case "UndefinedKeyword":
@@ -89,7 +97,6 @@ const makeDiff = <TSchema extends Schema.Schema<any, any>>(schema: TSchema): Dif
       case "Enums":
       case "TemplateLiteral":
       case "Union":
-      case "Lazy":
         console.dir(ast, { depth: null, colors: true })
         throw new Error("Not yet implemented")
       default: {
@@ -106,20 +113,67 @@ const makeDiff = <TSchema extends Schema.Schema<any, any>>(schema: TSchema): Dif
   return diff
 }
 
+const User_ = Schema.struct({
+  // age: Schema.number,
+  age: Schema.int()(Schema.number),
+  dateOfBirth: Schema.optional(Schema.DateFromString),
+  name: Schema.string,
+  aliases: Schema.array(Schema.string)
+  // subUser: Schema.optional(Schema.lazy(() => User))
+})
+
+type UserFrom = Schema.From<typeof User_> & { subUser?: UserFrom }
+type UserTo = Schema.To<typeof User_> & { subUser?: UserTo }
+const User: Schema.Schema<UserFrom, UserTo> = Schema.extend(User_)(Schema.struct({
+  subUser: Schema.optional(Schema.lazy(() => User))
+}))
+
+const diff = makeDiff(User)
+
 test("test", () => {
-  const schema = Schema.struct({
-    // age: Schema.number,
-    age: Schema.int()(Schema.number),
-    name: Schema.string,
-    aliases: Schema.array(Schema.string)
-  })
-
-  const diff = makeDiff(schema)
-
   const patch = diff({ age: 0, name: "foo", aliases: ["foo"] }, { age: 1, name: "bar", aliases: ["bar1", "bar2"] })
 
   console.dir(patch, { depth: null, colors: true })
 })
+
+test("test 2", () => {
+  const patch = diff({
+    age: 0,
+    name: "foo",
+    aliases: [],
+    subUser: {
+      age: 20,
+      name: "sub",
+      aliases: []
+    }
+  }, {
+    age: 0,
+    name: "bar",
+    aliases: [],
+    subUser: {
+      age: 10,
+      name: "sub",
+      aliases: []
+    }
+  })
+
+  console.dir(patch, { depth: null, colors: true })
+})
+
+// interface FractionalIndex<Output> extends ReadonlyArray<readonly [number, Output]> {}
+
+// Schema.data
+
+// const FractionalIndexedArray = <Input, Output>(
+//   elementSchema: Schema.Schema<Input, Output>
+// ): Schema.Schema<ReadonlyArray<Input>, FractionalIndex<Output>> =>
+//   Schema.transform(
+//     Schema.array(elementSchema),
+//     Schema.to(Schema.array(Schema.tuple(Schema.number, elementSchema))),
+//     // TODO calc fractional index
+//     (_) => _.map((v, i) => [i / i, v] as const),
+//     (_) => _.map(([, v]) => v)
+//   )
 
 // const { ast } = Schema.struct({
 //   uri: TrackURI,
@@ -135,6 +189,12 @@ test("test", () => {
   - flatten steps
   - optimize for sql...
 
+- custom schema for fractional indexed arrays (as list of tuple: [f-index, value])
 
-  schema todo: support ordered arrays (for fractional indexing)
+- goals: patches should be JSON serializable and as compact as possible
+
+- JSON patch
+- talk to Tim re DB write batching
+
+- schema todo: support ordered arrays (for fractional indexing)
 */
